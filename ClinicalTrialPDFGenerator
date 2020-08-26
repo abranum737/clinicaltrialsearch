@@ -1,0 +1,197 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
+import datetime
+import requests
+from requests import get
+from xml.etree import ElementTree
+from bs4 import BeautifulSoup
+from reportlab.platypus import SimpleDocTemplate, Paragraph, PageBreak
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import mm, inch
+
+
+#open webpage search : https://clinicaltrials.gov/ct2/results/download_fields?cond=COVID-19&down_fmt=plain
+# Read the online file by the URL provides above, and assign it to variable "df"
+path='https://clinicaltrials.gov/ct2/results/download_fields?cond=COVID-19&down_count=10000&down_fmt=csv'
+df_New = pd.read_csv(path)
+
+
+#find today's date and yesterday's for file names
+today = datetime.date.today()
+yesterday = today - datetime.timedelta(days=1)
+
+#Change today's date and yesterday's date into a string for file names
+today = str(today)
+yesterday= str(yesterday)
+
+#Save file as CLinicalTrialsGov concatinated with today's date as CSV
+df_New.to_csv(r"C:\Users\branuma\PythonScripts\Clinical_Trials_Project\Website_files_by_day\ClinicalTrialsGov"+today+".csv")
+
+######################################################################################
+
+#request user input for which file to compare
+
+user_input_date = input ("Enter date for comparison (YYYY-MM-DD) or yesterday: ")
+
+user_input_date = user_input_date.lower()
+
+
+if user_input_date == 'yesterday':
+    print('You are comparing clinical trials between today and: ' + yesterday)
+    df_Old = pd.read_csv(r"C:\Users\branuma\PythonScripts\Clinical_Trials_Project\Website_files_by_day\ClinicalTrialsGov" + yesterday + ".csv")
+
+else:
+    print('You are comparing clinical trials between today and: ' + user_input_date)
+    df_Old = pd.read_csv(r"C:\Users\branuma\PythonScripts\Clinical_Trials_Project\Website_files_by_day\ClinicalTrialsGov" + user_input_date + ".csv")
+
+
+#function to merge and find diffrent rows in two dataframes
+def dataframe_difference(df1, df2, which=None):
+    #Find rows which are different between two DataFrames.
+    comparison_df = df1.merge(df2,
+                              indicator=True,
+                              how='outer')
+    if which is None:
+        diff_df = comparison_df[comparison_df['_merge'] != 'both']
+    else:
+        diff_df = comparison_df[comparison_df['_merge'] == which]
+    diff_df.to_csv(r"C:\Users\branuma\PythonScripts\Clinical_Trials_Project\Website_files_by_day\ClinicalTrialsGovTemp.csv")
+    return diff_df
+
+#copy URL columns in old file and new file
+
+df_Comparison = df_New[["URL"]].copy()
+df_Comparison2 = df_Old[["URL"]].copy()
+
+#call function dataframe_difference with copies of columns as temp_file, print temp file
+df_temp_file = dataframe_difference(df_Comparison, df_Comparison2, 'left_only')
+
+
+###########################################################
+
+
+#define web scrubbing function:
+def web_scrub(add_url):
+
+    headers = {"Accept-Language": "en-US, en;q=0.5"}
+
+    url = add_url
+    results = requests.get(url, headers=headers)
+
+    soup = BeautifulSoup(results.text, "html.parser")
+
+    title = ()
+    sponsor = ()
+    information_provided_by = ()
+    brief_summary = ()
+    
+    #investigator = ()
+
+    table = ()
+
+    #condition_disease = ()
+    #intervention_treatment = ()
+    #phase = ()
+
+    #remove any unexpected items such as <sup> with import re and item = re.sub("<.+>", "", item)
+    
+    import re
+    title = soup.find('h1', class_="tr-h1 ct-sans-serif tr-solo_record").text
+    title = re.sub("<.+>", "", title)
+
+
+    sponsor = soup.find('div', class_="tr-info-text", id="sponsor").text
+    sponsor = re.sub("<.+>", "", sponsor)
+
+    information_provided_by = soup.find('div', class_="tr-info-text", id="responsibleparty").text
+    information_provided_by = re.sub("<.+>", "", information_provided_by)
+
+
+    brief_summary = soup.find('div', class_="ct-body3 tr-indent2").text
+    brief_summary = re.sub("<.+>", "", brief_summary)
+
+    table = soup.find('table', class_="ct-data_table tr-data_table").text
+    table = table.replace("\n\n", '\n')
+    table = table.replace("Condition or disease", '')
+    table = table.replace("Intervention/treatment", '')
+    table = table.replace("Phase", '')
+    table = table.replace("\n\n", '| ')
+
+
+    return title, sponsor, table, brief_summary
+
+###########################################################################
+
+
+#convert data frame column "URL" to list called "temp_list" for iteration through function
+temp_list = []
+length = len(df_temp_file.URL)
+
+temp_list = df_temp_file['URL'].tolist()
+
+#convert length to string and save as item title "__ new clinical trials on (date)"
+length = str(length)
+title_overall = '\n'+ length + ' new clinical trials on ' + today
+
+
+#begin pdf formatting and file
+PAGESIZE = (40 * mm, 20 * mm)
+BASE_MARGIN = 5 * mm
+
+my_doc = SimpleDocTemplate(r'C:\Users\branuma\PythonScripts\Clinical_Trials_Project\pdfs_by_day\list_' + today + '.pdf')
+
+flowables = []
+my_doc.build(flowables)
+
+sample_style_sheet = getSampleStyleSheet()
+# if you want to see all the sample styles, this prints them
+#sample_style_sheet.list()
+count = 0
+
+for i in range(0, len(temp_list)):
+    item = temp_list[i]
+    title, sponsor, table, brief_summary = web_scrub(item)
+    count +=1
+
+    if i == 0:
+        paragraph_1 = Paragraph(title_overall, sample_style_sheet['Title'])
+        flowables.append(paragraph_1)
+
+    paragraph_2 = Paragraph(
+        str(count) + ') ' + title,
+        sample_style_sheet['Heading2']
+    )
+    flowables.append(paragraph_2)
+
+    paragraph_6 = Paragraph(
+        '\n'+'URL: ' + '\n' + item,
+        sample_style_sheet['BodyText']
+    )
+    flowables.append(paragraph_6)
+
+
+    paragraph_3 = Paragraph(
+        '\n'+'SPONSOR: ' + sponsor,
+        sample_style_sheet['BodyText']
+    )
+    flowables.append(paragraph_3)
+
+    paragraph_4 = Paragraph(
+        '\n'+'ABOUT(disease | intervention | phase): ' + table,
+        sample_style_sheet['BodyText']
+    )
+    flowables.append(paragraph_4)
+
+    paragraph_5 = Paragraph(
+        '\n'+'BRIEF SUMMARY: ' + '\n' + brief_summary,
+        sample_style_sheet['BodyText']
+    )
+    flowables.append(paragraph_5)
+
+    flowables.append(PageBreak())
+    print(count)
+
+
+my_doc.build(flowables)
